@@ -7,7 +7,7 @@
 
 # 1. DEFINE PATHS TO NATIVE BINARIES
 X86_BIN="/clusterfs/HPC_development/homelab-heterogenous-HPC/bin/x86_64/cpu/run_mpi_test_x86"
-ARM64_BIN="HPC_development/homelab-heterogenous-HPC/bin/arm/bin_nano/cpu/run_mpi_test_arm"
+ARM64_BIN="/clusterfs/HPC_development/homelab-heterogenous-HPC/bin/arm/bin_nano/cpu/run_mpi_test_arm"
 
 # 2. LAUNCH ONE RANK PER PHYSICAL NODE
 # This proves every node can "talk" back to the Master on the NUC
