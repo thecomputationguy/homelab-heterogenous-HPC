@@ -26,8 +26,11 @@ void master(int num_workers) {
     int workers_alive = num_workers;
     int row_data[WIDTH];
     MPI_Status status;
+    
+    unsigned long long total_checksum = 0;
+    double start_time = MPI_Wtime(); // Start Timer
 
-    // 1. Initial assignment: Send one row to every worker
+    // 1. Initial assignment
     for (int i = 1; i <= num_workers; i++) {
         if (next_row < HEIGHT) {
             MPI_Send(&next_row, 1, MPI_INT, i, WORK_TAG, MPI_COMM_WORLD);
@@ -35,22 +38,32 @@ void master(int num_workers) {
         }
     }
 
-    // 2. Dynamic loop: Wait for anyone to finish and give them the next row
+    // 2. Dynamic loop
     while (workers_alive > 0) {
-        // Receive result from ANY worker
         MPI_Recv(row_data, WIDTH, MPI_INT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
         int worker_rank = status.MPI_SOURCE;
 
+        // Accumulate checksum from the received row
+        for (int i = 0; i < WIDTH; i++) {
+            total_checksum += row_data[i];
+        }
+
         if (next_row < HEIGHT) {
-            // Send next available row to the worker that just finished
             MPI_Send(&next_row, 1, MPI_INT, worker_rank, WORK_TAG, MPI_COMM_WORLD);
             next_row++;
         } else {
-            // No more work; tell this worker to shut down
             MPI_Send(NULL, 0, MPI_INT, worker_rank, TERMINATE_TAG, MPI_COMM_WORLD);
             workers_alive--;
         }
     }
+
+    double end_time = MPI_Wtime(); // End Timer
+
+    printf("\n--- HAL9000v2 Performance Report ---\n");
+    printf("Nodes/Ranks: %d\n", num_workers + 1);
+    printf("Total Time:  %.4f seconds\n", end_time - start_time);
+    printf("Checksum:    %llu\n", total_checksum);
+    printf("------------------------------------\n");
 }
 
 void worker(int rank) {
@@ -59,19 +72,14 @@ void worker(int rank) {
     MPI_Status status;
 
     while (1) {
-        // Wait for a command from Master
         MPI_Recv(&row_to_compute, 1, MPI_INT, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+        if (status.MPI_TAG == TERMINATE_TAG) break;
 
-        if (status.MPI_TAG == TERMINATE_TAG) break; // Exit loop
-
-        // Do the math for the assigned row
         for (int x = 0; x < WIDTH; x++) {
-            double real = -2.0 + 3.0 * x / WIDTH;
-            double imag = -1.5 + 3.0 * row_to_compute / HEIGHT;
+            double real = -2.0 + 3.0 * (double)x / WIDTH;
+            double imag = -1.5 + 3.0 * (double)row_to_compute / HEIGHT;
             result_row[x] = compute_pixel(real, imag);
         }
-
-        // Send completed row back and ask for more
         MPI_Send(result_row, WIDTH, MPI_INT, 0, 0, MPI_COMM_WORLD);
     }
 }
@@ -81,6 +89,12 @@ int main(int argc, char** argv) {
     int rank, size;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
+
+    if (size < 2) {
+        if (rank == 0) printf("Error: This Master-Worker code requires at least 2 ranks.\n");
+        MPI_Finalize();
+        return 1;
+    }
 
     if (rank == 0) master(size - 1);
     else worker(rank);
