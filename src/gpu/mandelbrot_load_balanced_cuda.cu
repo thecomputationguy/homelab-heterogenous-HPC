@@ -5,7 +5,7 @@
 
 #define WIDTH 4000
 #define HEIGHT 4000
-#define MAX_ITER 50000
+#define MAX_ITER 30000
 #define TILE_SIZE 16
 
 // Helper function to check for CUDA errors

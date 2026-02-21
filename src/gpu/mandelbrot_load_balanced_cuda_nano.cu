@@ -5,7 +5,7 @@
 
 #define WIDTH 4000
 #define HEIGHT 4000
-#define MAX_ITER 50000
+#define MAX_ITER 30000
 #define TILE_SIZE 16
 #define STRIPS 4 // Divide image into 4 horizontal strips to reset watchdog
 

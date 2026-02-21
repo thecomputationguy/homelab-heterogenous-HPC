@@ -7,7 +7,7 @@ using namespace sycl;
 
 #define WIDTH 4000
 #define HEIGHT 4000
-#define MAX_ITER 50000
+#define MAX_ITER 30000
 
 int main() {
     queue q(gpu_selector_v); 
