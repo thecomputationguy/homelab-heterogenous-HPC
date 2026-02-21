@@ -1,43 +1,38 @@
 #!/bin/bash
-#SBATCH --job-name=mandelbrot_all_gpus
-#SBATCH --output=mandelbrot_%A_%a.out  # %A is JobID, %a is ArrayID
+#SBATCH --job-name=mandel_multi
+#SBATCH --output=mandel_%A_%a.out
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --gres=gpu:1
-#SBATCH --array=0-2                    # Create 3 sub-jobs (0, 1, 2)
+#SBATCH --array=0-2
 
-# --- SAFETY CHECK ---
-if [ ! -d "/clusterfs/homelab-heterogenous-HPC" ]; then
-    echo "ERROR: /clusterfs not found on $HOSTNAME!"
-    exit 1
+# Define nodes based on Array ID
+NODES=("intel-head" "jetson-nano" "jetson-orin")
+TARGET_NODE=${NODES[$SLURM_ARRAY_TASK_ID]}
+
+# If we aren't on the target node yet, re-submit ourselves to that specific node
+if [ "$HOSTNAME" != "$TARGET_NODE" ]; then
+    srun --nodelist=$TARGET_NODE --gres=gpu:1 $0
+    exit 0
 fi
 
-# Get node metadata
-NODE_TYPE=$(scontrol show node $(hostname) | grep -oP 'Gres=gpu:\K[a-z0-9]+' | head -n 1)
-echo "Array Task ID: $SLURM_ARRAY_TASK_ID running on $HOSTNAME ($NODE_TYPE)"
+echo "Running on $HOSTNAME"
+export PATH=/usr/local/cuda/bin:$PATH
+export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
 
-case $NODE_TYPE in
-  "iris")
-    source /opt/intel/oneapi/setvars.sh
+case $HOSTNAME in
+  "intel-head")
     BINARY="/clusterfs/homelab-heterogenous-HPC/bin/x86_64/gpu/mandelbrot_load_balanced_sycl"
     ;;
-  "orin")
-    export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
-    BINARY="/clusterfs/homelab-heterogenous-HPC/bin/arm/bin_orin/gpu/mandelbrot_load_balanced_cuda"
+  "jetson-orin")
+    BINARY="/clusterfs/homelab-heterogenous-HPC/bin/arm/bin_orin/gpu/mandelbrot_load_balanced_cuda_orin"
     ;;
-  "nano")
-    BINARY="/clusterfs/homelab-heterogenous-HPC/bin/arm/bin_nano/gpu/mandelbrot_load_balanced_cuda"
-    ;;
-  *)
-    echo "No compatible GPU type found on $HOSTNAME."
-    exit 1
+  "jetson-nano")
+    BINARY="/clusterfs/homelab-heterogenous-HPC/bin/arm/bin_nano/gpu/mandelbrot_load_balanced_cuda_nano"
+    # The Nano needs to run WITHOUT srun to avoid the internal Slurm timer
+    $BINARY
+    exit 0
     ;;
 esac
 
-if [ -f "$BINARY" ]; then
-    chmod +x "$BINARY"
-    $BINARY
-else
-    echo "ERROR: Binary not found at $BINARY"
-    exit 1
-fi
+# Standard execution for Orin and Intel
+srun $BINARY

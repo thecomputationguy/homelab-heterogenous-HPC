@@ -16,27 +16,26 @@ void checkCudaError(cudaError_t err, const char* msg) {
 }
 
 __global__ void mandelbrot_kernel(long long *results, int width, int height, int max_iter) {
-    int col = blockIdx.x * blockDim.x + threadIdx.x;
-    int row = blockIdx.y * blockDim.y + threadIdx.y;
-
-    if (col < width && row < height) {
-        float cr = (float)(col - width / 1.5f) / (width / 3.0f);
-        float ci = (float)(row - height / 2.0f) / (height / 3.0f);
-
-        float zr = 0.0f, zi = 0.0f;
-        long long iter_count = 0;
-
-        for (int i = 0; i < max_iter; i++) {
-            float zr_sq = zr * zr;
-            float zi_sq = zi * zi;
+    // Grid-Stride Loop: Allows one kernel to handle any amount of data safely
+    for (int row = blockIdx.y * blockDim.y + threadIdx.y; row < height; row += blockDim.y * gridDim.y) {
+        for (int col = blockIdx.x * blockDim.x + threadIdx.x; col < width; col += blockDim.x * gridDim.x) {
             
-            if (zr_sq + zi_sq > 4.0f) break;
+            float cr = (float)(col - width / 1.5f) / (width / 3.0f);
+            float ci = (float)(row - height / 2.0f) / (height / 3.0f);
 
-            zi = 2.0f * zr * zi + ci;
-            zr = zr_sq - zi_sq + cr;
-            iter_count++;
+            float zr = 0.0f, zi = 0.0f;
+            long long iter_count = 0;
+
+            for (int i = 0; i < max_iter; i++) {
+                float zr_sq = zr * zr;
+                float zi_sq = zi * zi;
+                if (zr_sq + zi_sq > 4.0f) break;
+                zi = 2.0f * zr * zi + ci;
+                zr = zr_sq - zi_sq + cr;
+                iter_count++;
+            }
+            results[row * width + col] = iter_count;
         }
-        results[row * width + col] = iter_count;
     }
 }
 
