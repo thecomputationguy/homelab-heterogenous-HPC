@@ -6,8 +6,8 @@
 #SBATCH --overcommit
 
 # 1. DEFINE PATHS
-X86_BIN="/clusterfs/HPC_development/homelab-heterogenous-HPC/bin/x86_64/cpu/mandelbrot_load_balanced"
-ARM_BIN="/clusterfs/HPC_development/homelab-heterogenous-HPC/bin/arm/bin_nano/cpu/mandelbrot_load_balanced"
+X86_BIN="/clusterfs/homelab-heterogenous-HPC/bin/x86_64/cpu/mandelbrot_load_balanced"
+ARM_BIN="/clusterfs/homelab-heterogenous-HPC/bin/arm/bin_nano/cpu/mandelbrot_load_balanced"
 
 # 2. DEFINE SLOTS (High-density allocation)
 # We tell MPI each node has many 'slots' to allow high -np counts
