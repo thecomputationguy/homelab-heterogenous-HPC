@@ -34,7 +34,7 @@ job "homelab-gpu-mandelbrot" {
           readonly = false
         }
         command = "/bin/bash"
-        args    = ["-c", "chmod +x /app/homelab-heterogenous-HPC/bin/arm/bin_orin/gpu/mandelbrot_load_balanced_cuda && /app/homelab-heterogenous-HPC/bin/arm/bin_orin/gpu/mandelbrot_load_balanced_cuda"]
+        args    = ["-c", "chmod +x /app/homelab-heterogenous-HPC/bin/arm/bin_orin/gpu/mandelbrot_load_balanced_cuda_orin && /app/homelab-heterogenous-HPC/bin/arm/bin_orin/gpu/mandelbrot_load_balanced_cuda_orin"]
       }
     }
   }
@@ -98,7 +98,7 @@ job "homelab-gpu-mandelbrot" {
     task "mandelbrot-a500" {
       driver = "docker"
       config {
-        image   = "nvidia/cuda:12.4.1-base-ubuntu22.04"
+        image   = "nvidia/cuda:12.6.3-base-ubuntu24.04"
         runtime = "nvidia"
         
         mount {
