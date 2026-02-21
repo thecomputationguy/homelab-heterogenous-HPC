@@ -6,87 +6,93 @@
 #define WIDTH 4000
 #define HEIGHT 4000
 #define MAX_ITER 50000
+#define TILE_SIZE 16
 
 // Helper function to check for CUDA errors
 void checkCudaError(cudaError_t err, const char* msg) {
     if (err != cudaSuccess) {
         std::cerr << "ERROR: " << msg << " - " << cudaGetErrorString(err) << std::endl;
-        exit(EXIT_FAILURE);
+        exit(1);
     }
 }
 
-__global__ void mandelbrot_kernel(long long *results, int width, int height, int max_iter) {
-    // Grid-Stride Loop: Allows one kernel to handle any amount of data safely
-    for (int row = blockIdx.y * blockDim.y + threadIdx.y; row < height; row += blockDim.y * gridDim.y) {
-        for (int col = blockIdx.x * blockDim.x + threadIdx.x; col < width; col += blockDim.x * gridDim.x) {
-            
-            float cr = (float)(col - width / 1.5f) / (width / 3.0f);
-            float ci = (float)(row - height / 2.0f) / (height / 3.0f);
+__global__ void mandelbrot_tiled_fp32(int* output, int width, int height, float x_min, float y_min, float dx, float dy) {
+    // Shared memory to cache tile constants in FP32
+    __shared__ float tile_coords[2]; 
 
-            float zr = 0.0f, zi = 0.0f;
-            long long iter_count = 0;
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
+    int col = blockIdx.x * blockDim.x + tx;
+    int row = blockIdx.y * blockDim.y + ty;
 
-            for (int i = 0; i < max_iter; i++) {
-                float zr_sq = zr * zr;
-                float zi_sq = zi * zi;
-                if (zr_sq + zi_sq > 4.0f) break;
-                zi = 2.0f * zr * zi + ci;
-                zr = zr_sq - zi_sq + cr;
-                iter_count++;
-            }
-            results[row * width + col] = iter_count;
+    if (tx == 0 && ty == 0) {
+        tile_coords[0] = x_min + (float)(blockIdx.x * blockDim.x) * dx;
+        tile_coords[1] = y_min + (float)(blockIdx.y * blockDim.y) * dy;
+    }
+    __syncthreads();
+
+    if (col < width && row < height) {
+        float x0 = tile_coords[0] + (float)tx * dx;
+        float y0 = tile_coords[1] + (float)ty * dy;
+        float x = 0.0f, y = 0.0f;
+        int iter = 0;
+
+        float x2 = 0.0f, y2 = 0.0f;
+
+        // FP32 Math - Much faster on Jetson Nano/Orin
+        while (x2 + y2 <= 4.0f && iter < MAX_ITER) {
+            y = 2.0f * x * y + y0;
+            x = x2 - y2 + x0;
+            x2 = x * x;
+            y2 = y * y;
+            iter++;
         }
+        output[row * width + col] = iter;
     }
 }
 
 int main() {
-    // Determine Device Name for better logging
     cudaDeviceProp prop;
     cudaGetDeviceProperties(&prop, 0);
     std::cout << "Running on Device: " << prop.name << " (Compute " << prop.major << "." << prop.minor << ")" << std::endl;
 
-    size_t size = WIDTH * HEIGHT * sizeof(long long);
-    std::vector<long long> h_results(WIDTH * HEIGHT, 0);
+    // Single Precision constants
+    float x_min = -2.0f, x_max = 1.0f;
+    float y_min = -1.5f, y_max = 1.5f;
+    float dx = (x_max - x_min) / (float)WIDTH;
+    float dy = (y_max - y_min) / (float)HEIGHT;
 
-    long long *d_results;
-    
-    // 1. Allocate Memory with error check
+    size_t size = WIDTH * HEIGHT * sizeof(int);
+    std::vector<int> h_results(WIDTH * HEIGHT, 0);
+
+    int *d_results;
     checkCudaError(cudaMalloc(&d_results, size), "cudaMalloc");
 
-    // 2. Define Grid/Block dimensions
-    dim3 threadsPerBlock(16, 16);
+    dim3 threadsPerBlock(TILE_SIZE, TILE_SIZE);
     dim3 numBlocks((WIDTH + threadsPerBlock.x - 1) / threadsPerBlock.x,
                    (HEIGHT + threadsPerBlock.y - 1) / threadsPerBlock.y);
 
-    std::cout << "Calculating Mandelbrot (" << WIDTH << "x" << HEIGHT << ")..." << std::endl;
+    std::cout << "Calculating Mandelbrot FP32 (" << WIDTH << "x" << HEIGHT << ")..." << std::endl;
     
     auto start = std::chrono::high_resolution_clock::now();
 
-    // 3. Launch Kernel
-    mandelbrot_kernel<<<numBlocks, threadsPerBlock>>>(d_results, WIDTH, HEIGHT, MAX_ITER);
+    mandelbrot_tiled_fp32<<<numBlocks, threadsPerBlock>>>(d_results, WIDTH, HEIGHT, x_min, y_min, dx, dy);
     
-    // 4. Check for immediate launch errors (like architecture mismatch)
     checkCudaError(cudaGetLastError(), "Kernel Launch");
-
-    // 5. Synchronize and check for runtime errors
     checkCudaError(cudaDeviceSynchronize(), "cudaDeviceSynchronize");
 
     auto end = std::chrono::high_resolution_clock::now();
 
-    // 6. Copy back to Host
     checkCudaError(cudaMemcpy(h_results.data(), d_results, size, cudaMemcpyDeviceToHost), "cudaMemcpy");
 
-    // Calculate Checksum
     long long final_checksum = 0;
-    for (long long val : h_results) final_checksum += val;
+    for (int val : h_results) final_checksum += (long long)val;
 
     std::chrono::duration<double> diff = end - start;
-    std::cout << "\n--- CUDA GPU Results ---" << std::endl;
+    std::cout << "\n--- CUDA GPU FP32 Results ---" << std::endl;
     std::cout << "Total Time: " << diff.count() << " seconds" << std::endl;
     std::cout << "Verification Checksum: " << final_checksum << std::endl;
 
-    // 7. Cleanup
     cudaFree(d_results);
-    
     return 0;
 }
