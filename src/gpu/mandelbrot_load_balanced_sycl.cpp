@@ -1,62 +1,82 @@
 #include <sycl/sycl.hpp>
 #include <iostream>
 #include <vector>
-#include <chrono>
+#include <iomanip>
 
 using namespace sycl;
 
+// --- Configuration ---
 #define WIDTH 4000
 #define HEIGHT 4000
-#define MAX_ITER 30000
+#define MAX_ITER 500000
+#define CHUNK_SIZE 10  // Process 10 rows at a time to stay under hangcheck limits
+
+void print_progress(int current, int total) {
+    float progress = (float)current / total;
+    int barWidth = 50;
+    std::cout << "\r[";
+    int pos = barWidth * progress;
+    for (int i = 0; i < barWidth; ++i) {
+        if (i < pos) std::cout << "=";
+        else if (i == pos) std::cout << ">";
+        else std::cout << " ";
+    }
+    std::cout << "] " << int(progress * 100.0) << "% (" << current << "/" << total << " rows)" << std::flush;
+}
 
 int main() {
-    queue q(gpu_selector_v); 
-    std::cout << "Running on: " << q.get_device().get_info<info::device::name>() << " (FP32)\n";
+    // 1. Setup Device and Queue
+    queue q(gpu_selector_v);
+    std::cout << "Running on: " << q.get_device().get_info<info::device::name>() << "\n";
+    std::cout << "Iterations: " << MAX_ITER << " | Resolution: " << WIDTH << "x" << HEIGHT << "\n\n";
 
-    std::vector<long long> results(WIDTH * HEIGHT, 0);
-    auto start_time = std::chrono::high_resolution_clock::now();
+    // 2. Allocate Unified Shared Memory (USM) for the result
+    int *output = malloc_shared<int>(WIDTH * HEIGHT, q);
 
-    {
-        buffer<long long, 1> buf_res(results.data(), range<1>(WIDTH * HEIGHT));
+    auto start_time = std::chrono::steady_clock::now();
 
-        q.submit([&](handler& h) {
-            accessor acc(buf_res, h, write_only);
+    // 3. Row-by-Row Processing (Chunked)
+    for (int start_row = 0; start_row < HEIGHT; start_row += CHUNK_SIZE) {
+        int rows_to_process = std::min(CHUNK_SIZE, HEIGHT - start_row);
 
-            h.parallel_for(range<2>(HEIGHT, WIDTH), [=](id<2> idx) {
-                int row = idx[0];
-                int col = idx[1];
+        // Submit a small "chunk" of rows to the GPU
+        q.parallel_for(range<2>(rows_to_process, WIDTH), [=](id<2> index) {
+            int local_row = index[0];
+            int global_row = start_row + local_row;
+            int x_idx = index[1];
 
-                // Switched math to float
-                float cr = (float)(col - WIDTH / 1.5f) / (WIDTH / 3.0f);
-                float ci = (float)(row - HEIGHT / 2.0f) / (HEIGHT / 3.0f);
+            double x0 = -2.0 + 3.0 * x_idx / WIDTH;
+            double y0 = -1.5 + 3.0 * global_row / HEIGHT;
 
-                float zr = 0.0f, zi = 0.0f;
-                long long iter_count = 0;
+            double x = 0.0, y = 0.0, x2 = 0.0, y2 = 0.0;
+            int iter = 0;
 
-                for (int i = 0; i < MAX_ITER; i++) {
-                    float zr_sq = zr * zr;
-                    float zi_sq = zi * zi;
-                    
-                    if (zr_sq + zi_sq > 4.0f) break;
+            while (x2 + y2 <= 4.0 && iter < MAX_ITER) {
+                y = 2.0 * x * y + y0;
+                x = x2 - y2 + x0;
+                x2 = x * x;
+                y2 = y * y;
+                iter++;
+            }
+            output[global_row * WIDTH + x_idx] = iter;
+        }).wait(); // Crucial: wait for the chunk to finish so the driver can breathe
 
-                    zi = 2.0f * zr * zi + ci;
-                    zr = zr_sq - zi_sq + cr;
-                    iter_count++;
-                }
-                acc[row * WIDTH + col] = iter_count;
-            });
-        });
+        print_progress(start_row + rows_to_process, HEIGHT);
     }
 
-    auto end_time = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> diff = end_time - start_time;
+    auto end_time = std::chrono::steady_clock::now();
+    std::chrono::duration<double> elapsed = end_time - start_time;
 
-    long long final_checksum = 0;
-    for (auto& val : results) final_checksum += val;
+    // 4. Checksum Verification
+    unsigned long long checksum = 0;
+    for (int i = 0; i < WIDTH * HEIGHT; i++) checksum += output[i];
 
-    std::cout << "\n--- SYCL GPU FP32 Results ---\n";
-    std::cout << "Total Time: " << diff.count() << " seconds\n";
-    std::cout << "Verification Checksum: " << final_checksum << "\n";
+    std::cout << "\n\n--- SYCL GPU Results ---";
+    std::cout << "\nTotal Time: " << std::fixed << std::setprecision(4) << elapsed.count() << " seconds";
+    std::cout << "\nChecksum:   " << checksum << "\n";
+
+    // 5. Cleanup
+    free(output, q);
 
     return 0;
 }
